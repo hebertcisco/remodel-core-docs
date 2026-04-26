@@ -1,32 +1,60 @@
 ---
-title: Hello World
-description: |
-  Your first `document`
-  You'll love it!
+title: Introduction
+description: remodel-core is a Rust library for database modeling — build ER diagrams, convert them to relational schemas, and generate SQL DDL.
 ---
 
-Hey there! Fumadocs is the docs framework that also works on React Router!
+**remodel-core** is the engine that powers [Remodel](https://github.com/hebertcisco/remodel-ui) — a desktop application for visual database modeling. It is also published as an independent Rust crate so you can embed it in your own tools and pipelines.
 
-## Heading
+## What it does
 
-Hello World
+The library works in three layers, each building on the previous one:
 
-<Cards>
-  <Card title="Learn more about React Router" href="https://reactrouter.com" />
-  <Card title="Learn more about Fumadocs" href="https://fumadocs.dev" />
-</Cards>
+| Layer | Module | Purpose |
+|---|---|---|
+| Conceptual | `models::conceptual` | Entity-Relationship structures (entities, attributes, relationships, specializations) |
+| Logical | `models::logical` | Relational schema (tables, columns, constraints, foreign keys) |
+| Physical | `sql` | SQL DDL generation per dialect |
 
-```ts
-console.log('I love React!');
+The transformation from conceptual → logical is handled by `transform::conceptual_to_logical`, and structural correctness is checked by the `validation` module.
+
+## Origin
+
+remodel-core is a Rust reimplementation of the modeling engine of [brModelo](https://github.com/sis4com/brModelo) by Carlos Henrique Cândido. The type names and algorithm choices follow the original Java implementation closely, so brModelo `.brM3` files can be migrated to the `.remodel` format with the companion migration functions.
+
+## Quick example
+
+```rust
+use remodel_core::prelude::*;
+
+// 1. Build a conceptual model
+let mut m = ConceptualModel::new("blog");
+
+let post  = m.add_entity("Post");
+let user  = m.add_entity("User");
+
+m.add_primary_attribute(post, "id",    DataType::Integer)?;
+m.add_attribute(AttributeOwner::Entity(post), "title", DataType::Varchar(255))?;
+m.add_primary_attribute(user, "id",    DataType::Integer)?;
+m.add_attribute(AttributeOwner::Entity(user), "email", DataType::Varchar(120))?;
+
+m.relate("wrote", post, Cardinality::ZeroToMany)
+ .with(user, Cardinality::OneToMany);
+
+// 2. Validate
+let diags = validate_conceptual(&m);
+assert!(diags.iter().all(|d| d.severity != Severity::Error));
+
+// 3. Convert to logical
+let logical = m.to_logical()?;
+
+// 4. Generate SQL
+let sql = logical.to_sql(SqlDialect::Postgres);
+println!("{sql}");
 ```
 
-### Heading
-
-#### Heading
-
-| Head                            | Description                         |
-| ------------------------------- | ----------------------------------- |
-| `hello`                         | Hello World                         |
-| very **important**              | Hey                                 |
-| _Surprisingly_                  | Fumadocs                            |
-| very long text that looks weird | hello world hello world hello world |
+<Cards>
+  <Card title="Getting Started" href="/docs/getting-started" description="Installation and first steps" />
+  <Card title="Conceptual Model" href="/docs/conceptual-model" description="Entities, attributes, and relationships" />
+  <Card title="Conversion" href="/docs/conversion" description="ER to relational mapping options" />
+  <Card title="SQL Generation" href="/docs/sql-generation" description="DDL for PostgreSQL, MySQL, SQLite" />
+</Cards>

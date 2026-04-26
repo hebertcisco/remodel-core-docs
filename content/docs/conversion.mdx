@@ -1,0 +1,168 @@
+---
+title: Conversion
+description: How remodel-core maps an Entity-Relationship model to a relational schema, and the options that control each ambiguous decision.
+---
+
+Converting a conceptual model to a logical model is the core transformation in remodel-core. Call `to_logical()` on a `ConceptualModel`:
+
+```rust
+let logical: LogicalModel = m.to_logical()?;
+
+// With options:
+let logical = m.to_logical_with_options(ConvertOptions {
+    relationship: RelationshipResolution::Auto,
+    specialization: SpecializationStrategy::OneTablePerClass,
+    complex_attribute: ComplexAttributeStrategy::SeparateTable,
+    modern_naming: false,
+    sanitize_identifiers: false,
+})?;
+```
+
+`to_logical` uses `ConvertOptions::default()`, which applies the same defaults as brModelo's built-in help recommends.
+
+## Validation gate
+
+`to_logical` calls `validate_conceptual` internally. If any `Severity::Error` diagnostic is present, the conversion returns `Err(Error::ConversionError(...))`. Fix validation errors before calling `to_logical`.
+
+## ConvertOptions
+
+```rust
+pub struct ConvertOptions {
+    pub relationship:         RelationshipResolution,
+    pub specialization:       SpecializationStrategy,
+    pub complex_attribute:    ComplexAttributeStrategy,
+    pub modern_naming:        bool,
+    pub sanitize_identifiers: bool,
+}
+```
+
+### modern_naming
+
+When `false` (default), synthesized PK columns are named `name_pk` and FK columns `name_fk`, matching brModelo's convention. When `true`, both use `name_id`.
+
+```rust
+// modern_naming: false
+// → "customer_pk", "customer_fk"
+
+// modern_naming: true
+// → "customer_id" (for both PK and FK)
+```
+
+### sanitize_identifiers
+
+When `true`, drops non-alphanumeric characters from generated identifiers (matches brModelo's `removerCaracteresEspeciais`). Useful for dialects that reject special characters even when quoted.
+
+---
+
+## RelationshipResolution
+
+Controls how each relationship becomes tables and/or foreign keys.
+
+| Variant | When used |
+|---|---|
+| `Auto` (default) | Decide from cardinalities (see table below) |
+| `AlwaysAssociative` | Always emit a junction table, even for 1:1 and 1:N |
+| `AlwaysMerge` | Always merge tables; only valid for 1:1, ignored otherwise |
+
+### Auto resolution rules
+
+| Cardinality pair | Action |
+|---|---|
+| `(1..1) ↔ (1..1)` | Merge the two entity tables into one |
+| `(0..1 or 1..1) ↔ (0..N or 1..N)` | FK on the **many** side; nullable if min is 0 |
+| `(0..N or 1..N) ↔ (0..N or 1..N)` | Associative (junction) table |
+
+For self-referencing relationships, a recursive FK is added to the single table.
+
+---
+
+## SpecializationStrategy
+
+Controls how IS-A hierarchies fold into the relational schema.
+
+### OneTablePerClass (default)
+
+One table per entity (parent and each child). Children get a foreign key to the parent table. Always safe.
+
+```sql
+-- Parent stays
+CREATE TABLE "Vehicle" ("id" INTEGER PRIMARY KEY, "brand" VARCHAR(60));
+
+-- Each child gets its own table + FK
+CREATE TABLE "Car"   ("id" INTEGER PRIMARY KEY, "doors" INTEGER,
+  FOREIGN KEY ("id") REFERENCES "Vehicle"("id"));
+CREATE TABLE "Truck" ("id" INTEGER PRIMARY KEY, "payload_kg" INTEGER,
+  FOREIGN KEY ("id") REFERENCES "Vehicle"("id"));
+```
+
+### SingleTable
+
+Parent absorbs all child columns plus a discriminator `type` column. Only valid for **total + disjoint** specializations; ignored otherwise.
+
+```sql
+CREATE TABLE "Vehicle" (
+  "id" INTEGER PRIMARY KEY,
+  "brand" VARCHAR(60),
+  "type" VARCHAR(32),  -- discriminator
+  "doors" INTEGER,     -- Car-only; NULL for Truck rows
+  "payload_kg" INTEGER -- Truck-only; NULL for Car rows
+);
+```
+
+### OneTablePerChild
+
+Parent table disappears; each child absorbs the parent's columns. Best for **total** specializations.
+
+```sql
+CREATE TABLE "Car"   ("id" INTEGER PRIMARY KEY, "brand" VARCHAR(60), "doors" INTEGER);
+CREATE TABLE "Truck" ("id" INTEGER PRIMARY KEY, "brand" VARCHAR(60), "payload_kg" INTEGER);
+```
+
+---
+
+## ComplexAttributeStrategy
+
+Controls how composite and multivalued attributes map to columns.
+
+### SeparateTable (default)
+
+A separate table is created, joined by a FK to the owning entity. Always safe and the brModelo default for multivalued attributes.
+
+```sql
+-- Multivalued "phone" on Customer:
+CREATE TABLE "Customer_phone" (
+  "id" INTEGER PRIMARY KEY,
+  "customer_fk" INTEGER NOT NULL,
+  "phone" VARCHAR(255) NOT NULL,
+  FOREIGN KEY ("customer_fk") REFERENCES "Customer"("id")
+);
+```
+
+### Flatten
+
+Columns are inlined into the owner table, prefixed with the composite/multivalued attribute's name. Only practical when the maximum cardinality is small and known.
+
+```sql
+-- Composite "address" on Customer flattened:
+CREATE TABLE "Customer" (
+  "id" INTEGER PRIMARY KEY,
+  "address_street" VARCHAR(255),
+  "address_city"   VARCHAR(100),
+  "address_zip"    VARCHAR(20)
+);
+```
+
+---
+
+## Naming conventions
+
+The converter generates column names using the entity or relationship name:
+
+| Synthesized column | Pattern | Example |
+|---|---|---|
+| Primary key | `{entity_name}{pk_suffix}` | `Customer_pk` / `Customer_id` |
+| Foreign key | `{entity_name}{fk_suffix}` | `Customer_fk` / `Customer_id` |
+| Junction table PK | both source FKs as composite PK | — |
+| Discriminator | `type` | `type VARCHAR(32)` |
+
+Use `modern_naming: true` to collapse `_pk` / `_fk` into `_id`.

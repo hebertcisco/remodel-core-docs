@@ -1,0 +1,120 @@
+---
+title: Getting Started
+description: Add remodel-core to your project and build your first ER model in minutes.
+---
+
+## Installation
+
+Add the crate to your `Cargo.toml`:
+
+```toml
+[dependencies]
+remodel-core = "0.1"
+```
+
+For serialization support (required if you read or write `.remodel` files), `serde` and `serde_json` are already re-exported through the crate's own dependencies — no extra features needed.
+
+## Prelude
+
+Import everything you need in one line:
+
+```rust
+use remodel_core::prelude::*;
+```
+
+The prelude re-exports:
+
+- `ConceptualModel`, `Entity`, `Attribute`, `Relationship`, `EntityId`, `AttributeId`, `RelationshipId`
+- `AttributeOwner`, `AttributeKind`, `Specialization`, `SpecializationKind`, `Union`
+- `LogicalModel`, `Table`, `Column`, `Constraint`, `ConstraintKind`, `ForeignKey`
+- `TableId`, `ColumnId`
+- `DataType`, `Cardinality`
+- `SqlDialect`
+- `ConvertOptions`, `RelationshipResolution`, `SpecializationStrategy`
+- `Diagnostic`, `Severity`
+- `Error`, `Result`
+
+## First model
+
+```rust
+use remodel_core::prelude::*;
+
+fn main() -> Result<()> {
+    let mut m = ConceptualModel::new("library");
+
+    // Entities
+    let book   = m.add_entity("Book");
+    let author = m.add_entity("Author");
+
+    // Attributes
+    m.add_primary_attribute(book,   "isbn",       DataType::Varchar(13))?;
+    m.add_attribute(AttributeOwner::Entity(book),   "title",      DataType::Varchar(255))?;
+    m.add_attribute(AttributeOwner::Entity(book),   "year",       DataType::Integer)?;
+    m.add_primary_attribute(author, "id",         DataType::Integer)?;
+    m.add_attribute(AttributeOwner::Entity(author), "full_name",  DataType::Varchar(120))?;
+
+    // Relationship: one author writes many books (1..N ↔ 0..N)
+    m.relate("wrote", author, Cardinality::OneToMany)
+     .with(book, Cardinality::ZeroToMany);
+
+    // Validate
+    let diags = remodel_core::validation::validate_conceptual(&m);
+    for d in &diags {
+        eprintln!("[{}] {}: {}", d.severity, d.code, d.message);  // see Severity impl Display
+    }
+
+    // Convert
+    let logical = m.to_logical()?;
+    println!("Tables: {}", logical.tables.len());
+
+    // Generate DDL
+    let ddl = logical.to_sql(SqlDialect::Postgres);
+    println!("{ddl}");
+
+    Ok(())
+}
+```
+
+### Expected output
+
+```sql
+CREATE TABLE "Author" (
+  "id" INTEGER NOT NULL,
+  CONSTRAINT "pk_Author" PRIMARY KEY ("id")
+);
+
+CREATE TABLE "Book" (
+  "isbn" VARCHAR(13) NOT NULL,
+  "title" VARCHAR(255) NOT NULL,
+  "year" INTEGER NOT NULL,
+  "author_fk" INTEGER NOT NULL,
+  CONSTRAINT "pk_Book" PRIMARY KEY ("isbn"),
+  CONSTRAINT "fk_Book_Author" FOREIGN KEY ("author_fk")
+    REFERENCES "Author" ("id")
+    ON UPDATE NO ACTION ON DELETE NO ACTION
+);
+```
+
+## Error handling
+
+All fallible operations return `remodel_core::Result<T>`, which is `Result<T, remodel_core::Error>`. The `Error` enum covers:
+
+- `UnknownReference` — an ID does not exist in the model
+- `InvalidSpecialization` — structural invariant violated
+- `ConversionError` — the model cannot be converted (e.g. missing primary key)
+- `SerdeJson` — JSON serialization/deserialization failure
+
+```rust
+match m.entity(EntityId(999)) {
+    Ok(e)  => println!("{}", e.name),
+    Err(e) => eprintln!("Error: {e}"),   // "unknown entity reference: 999"
+}
+```
+
+## Next steps
+
+<Cards>
+  <Card title="Conceptual Model" href="/docs/conceptual-model" description="Full reference for entities, attributes, relationships, and more" />
+  <Card title="Conversion options" href="/docs/conversion" description="Control how ER constructs map to tables and foreign keys" />
+  <Card title="Validation codes" href="/docs/validation" description="All diagnostic codes and what triggers them" />
+</Cards>

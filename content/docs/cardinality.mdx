@@ -1,0 +1,65 @@
+---
+title: Cardinality
+description: The four cardinality variants used on relationship endpoints — ZeroToOne, OneToOne, ZeroToMany, OneToMany.
+---
+
+`Cardinality` annotates one **endpoint** of a relationship. It expresses the minimum and maximum number of instances of the **other** participating entity that are associated with each instance of *this* entity.
+
+## Convention
+
+remodel-core uses the **look-here** convention (Heuser's textbook, widely used in Brazil's academic ER modeling tradition): the cardinality written *next to entity E* describes how many tuples of the **other** entity in the relationship participate per tuple of *E*.
+
+For example:
+
+```
+Author ──── [wrote] ──── Book
+ 1..N                    0..N
+```
+
+- `Author.cardinality = OneToMany` → *"each Author wrote 1..N books"* (many books per author)
+- `Book.cardinality = ZeroToMany` → *"each Book has 0..N authors"* (many authors per book, or none)
+
+## Variants
+
+| Variant | Notation | min | max | Meaning |
+|---|---|---|---|---|
+| `ZeroToOne` | `0..1` | 0 | 1 | Optional, single |
+| `OneToOne` | `1..1` | 1 | 1 | Mandatory, single |
+| `ZeroToMany` | `0..N` | 0 | ∞ | Optional, multiple |
+| `OneToMany` | `1..N` | 1 | ∞ | Mandatory, multiple |
+
+## Usage
+
+```rust
+m.relate("works_for", employee, Cardinality::ZeroToMany)
+ .with(department, Cardinality::OneToOne);
+```
+
+This reads: *each Employee works for 0..N departments* (employee side), and *each Department has exactly one role per employee* (department side). The converter uses these cardinalities to decide whether to place a foreign key on the employee table, the department table, or emit a junction table.
+
+## Helper methods
+
+```rust
+let c = Cardinality::OneToMany;
+
+c.is_many();       // true  — max is unbounded (ZeroToMany | OneToMany)
+c.is_mandatory();  // true  — min ≥ 1 (OneToOne | OneToMany) → FK is NOT NULL
+
+c.notation();      // "1..N"
+c.code();          // 3  — brModelo wire integer (0..=3)
+
+Cardinality::from_code(2);  // Some(ZeroToMany)
+Cardinality::from_code(9);  // None — unknown code
+```
+
+## Impact on conversion
+
+The converter uses cardinalities to resolve how a relationship becomes foreign keys or a junction table:
+
+| Left | Right | Default resolution |
+|---|---|---|
+| `1..1` | `1..1` | Merge tables |
+| `0..1` or `1..1` | `0..N` or `1..N` | FK on the **many** side |
+| `0..N` or `1..N` | `0..N` or `1..N` | Junction (associative) table |
+
+You can override this per-relationship with `RelationshipResolution`. See [Conversion](/docs/conversion) for details.

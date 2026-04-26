@@ -1,3 +1,18 @@
 {
-  "pages": ["index", "..."]
+  "pages": [
+    "index",
+    "getting-started",
+    "---Concepts",
+    "conceptual-model",
+    "logical-model",
+    "data-types",
+    "cardinality",
+    "---Guides",
+    "validation",
+    "conversion",
+    "sql-generation",
+    "---Integration",
+    "tauri-commands",
+    "file-format"
+  ]
 }

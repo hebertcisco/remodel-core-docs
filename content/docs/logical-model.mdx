@@ -1,0 +1,136 @@
+---
+title: Logical Model
+description: The relational schema produced by converting a conceptual model — tables, columns, constraints, and foreign keys.
+---
+
+The logical model (`models::logical`) represents a relational database schema: tables with typed columns, primary keys, foreign keys, unique constraints, and check constraints. You rarely construct it by hand — it is the output of `ConceptualModel::to_logical()` — but you can build and modify it directly if needed.
+
+## LogicalModel
+
+```rust
+let mut lm = LogicalModel::new("e_commerce");
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | `String` | Database or schema name |
+| `tables` | `IndexMap<TableId, Table>` | All tables, in insertion order |
+
+### Building manually
+
+```rust
+let customers = lm.add_table("Customer");
+let cid  = lm.add_column(customers, "id",    DataType::Integer)?;
+let name = lm.add_column(customers, "email", DataType::Varchar(120))?;
+lm.set_primary_key(customers, vec![cid])?;
+
+let orders = lm.add_table("Order");
+let oid    = lm.add_column(orders, "id",          DataType::Integer)?;
+let cfk    = lm.add_column(orders, "customer_id", DataType::Integer)?;
+lm.set_primary_key(orders, vec![oid])?;
+lm.add_foreign_key(orders, ForeignKey {
+    columns:           vec![cfk],
+    references_table:  customers,
+    references_columns: vec![cid],
+    on_update: ReferentialAction::NoAction,
+    on_delete: ReferentialAction::Cascade,
+})?;
+```
+
+### Querying
+
+```rust
+let t = lm.table(customers)?;
+let pk_cols = t.primary_key_columns();  // &[ColumnId]
+let pk      = t.primary_key();          // Option<&Constraint>
+```
+
+## Table
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `TableId` | Unique handle |
+| `name` | `String` | Table name |
+| `columns` | `IndexMap<ColumnId, Column>` | Columns in insertion order |
+| `constraints` | `IndexMap<ConstraintId, Constraint>` | PK, UNIQUE, FK, CHECK |
+| `comment` | `String` | Optional DDL comment |
+
+### Iterating columns
+
+```rust
+for col in t.columns_iter() {
+    println!("{}: {:?} (pk={}, fk={})", col.name, col.data_type, col.is_primary, col.is_foreign);
+}
+```
+
+## Column
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `ColumnId` | Unique handle |
+| `name` | `String` | Column name |
+| `data_type` | `DataType` | See [Data Types](/docs/data-types) |
+| `nullable` | `bool` | `true` → `NULL`; `false` → `NOT NULL` |
+| `is_primary` | `bool` | Set automatically by `set_primary_key` |
+| `is_foreign` | `bool` | Set automatically by `add_foreign_key` |
+| `is_unique` | `bool` | Set automatically by `add_unique` for single-column uniques |
+| `default` | `Option<String>` | Verbatim `DEFAULT` clause value |
+| `comment` | `String` | Optional DDL comment |
+
+## Constraint
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `ConstraintId` | Unique handle |
+| `name` | `Option<String>` | Explicit constraint name; auto-generated if `None` |
+| `kind` | `ConstraintKind` | Determines payload |
+
+### ConstraintKind
+
+```rust
+pub enum ConstraintKind {
+    PrimaryKey { columns: Vec<ColumnId> },
+    Unique     { columns: Vec<ColumnId> },
+    ForeignKey(ForeignKey),
+    Check      { expression: String },
+}
+```
+
+### Constraint helpers
+
+```rust
+constraint.is_primary_key();  // true for PrimaryKey variant
+constraint.is_foreign_key();  // true for ForeignKey variant
+```
+
+## ForeignKey
+
+| Field | Type | Description |
+|---|---|---|
+| `columns` | `Vec<ColumnId>` | Local FK columns (in order) |
+| `references_table` | `TableId` | Referenced table |
+| `references_columns` | `Vec<ColumnId>` | Referenced columns (matching order) |
+| `on_update` | `ReferentialAction` | Action on parent UPDATE |
+| `on_delete` | `ReferentialAction` | Action on parent DELETE |
+
+### ReferentialAction
+
+| Variant | SQL keyword |
+|---|---|
+| `NoAction` | `NO ACTION` |
+| `Restrict` | `RESTRICT` |
+| `Cascade` | `CASCADE` |
+| `SetNull` | `SET NULL` |
+| `SetDefault` | `SET DEFAULT` |
+
+The default for both `on_update` and `on_delete` is `NoAction`.
+
+## Generating SQL
+
+Once you have a `LogicalModel`, call `to_sql`:
+
+```rust
+let ddl = lm.to_sql(SqlDialect::Postgres);
+```
+
+See [SQL Generation](/docs/sql-generation) for dialect differences and full output examples.

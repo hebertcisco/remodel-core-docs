@@ -1,0 +1,81 @@
+---
+title: Data Types
+description: The DataType enum — dialect-agnostic column types that map to concrete SQL expressions per dialect.
+---
+
+`DataType` is a dialect-agnostic enumeration of the most common SQL column types. The SQL generation layer maps each variant to the appropriate keyword for PostgreSQL, MySQL, or SQLite.
+
+## Variants
+
+| Variant | Rust syntax | Description |
+|---|---|---|
+| `Integer` | `DataType::Integer` | 32-bit signed integer |
+| `BigInt` | `DataType::BigInt` | 64-bit signed integer |
+| `SmallInt` | `DataType::SmallInt` | 16-bit signed integer |
+| `Real` | `DataType::Real` | IEEE-754 double-precision float |
+| `Decimal(p, s)` | `DataType::Decimal(10, 2)` | Fixed-precision: `p` digits, `s` after the decimal point |
+| `Boolean` | `DataType::Boolean` | True/false value |
+| `Varchar(n)` | `DataType::Varchar(255)` | Variable-length text up to `n` characters |
+| `Char(n)` | `DataType::Char(10)` | Fixed-length text of exactly `n` characters |
+| `Text` | `DataType::Text` | Unbounded text |
+| `Date` | `DataType::Date` | Calendar date (no time) |
+| `Time` | `DataType::Time` | Time of day (no date) |
+| `Timestamp` | `DataType::Timestamp` | Date + time |
+| `Uuid` | `DataType::Uuid` | Universally unique identifier |
+| `Bytes` | `DataType::Bytes` | Opaque binary blob |
+| `Custom(s)` | `DataType::Custom("jsonb".into())` | Verbatim dialect-specific type string |
+
+## Default values
+
+```rust
+DataType::default()         // Varchar(255) — sensible default for text columns
+DataType::default_key()     // Integer — used by the converter for synthesized PK columns
+```
+
+## Dialect mapping
+
+| `DataType` | PostgreSQL | MySQL | SQLite |
+|---|---|---|---|
+| `Integer` | `INTEGER` | `INT` | `INTEGER` |
+| `BigInt` | `BIGINT` | `BIGINT` | `INTEGER` |
+| `SmallInt` | `SMALLINT` | `SMALLINT` | `INTEGER` |
+| `Real` | `DOUBLE PRECISION` | `DOUBLE` | `REAL` |
+| `Decimal(p,s)` | `NUMERIC(p,s)` | `DECIMAL(p,s)` | `REAL` |
+| `Boolean` | `BOOLEAN` | `TINYINT(1)` | `INTEGER` |
+| `Varchar(n)` | `VARCHAR(n)` | `VARCHAR(n)` | `TEXT` |
+| `Char(n)` | `CHAR(n)` | `CHAR(n)` | `TEXT` |
+| `Text` | `TEXT` | `TEXT` | `TEXT` |
+| `Date` | `DATE` | `DATE` | `TEXT` |
+| `Time` | `TIME` | `TIME` | `TEXT` |
+| `Timestamp` | `TIMESTAMP` | `DATETIME` | `TEXT` |
+| `Uuid` | `UUID` | `CHAR(36)` | `TEXT` |
+| `Bytes` | `BYTEA` | `BLOB` | `BLOB` |
+| `Custom(s)` | verbatim | verbatim | verbatim |
+
+<Callout type="warn">
+  SQLite is dynamically typed. All date/time types collapse to `TEXT`, integers collapse to `INTEGER`, and floats to `REAL`. If you need precise SQLite column affinities, use `Custom`.
+</Callout>
+
+## Using Custom
+
+`Custom` lets you bypass the abstraction for dialect-specific types:
+
+```rust
+// PostgreSQL JSONB
+m.add_attribute(
+    AttributeOwner::Entity(product),
+    "metadata",
+    DataType::Custom("jsonb".into()),
+)?;
+
+// PostGIS geography
+m.add_attribute(
+    AttributeOwner::Entity(location),
+    "coords",
+    DataType::Custom("GEOGRAPHY(POINT, 4326)".into()),
+)?;
+```
+
+<Callout type="warn">
+  `Custom` values are emitted verbatim. They are not validated and may produce invalid SQL if the string is not correct for the target dialect.
+</Callout>

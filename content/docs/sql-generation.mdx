@@ -1,0 +1,150 @@
+---
+title: SQL Generation
+description: Generate CREATE TABLE DDL for PostgreSQL, MySQL / MariaDB, and SQLite from a LogicalModel.
+---
+
+Once you have a `LogicalModel`, call `to_sql` to generate DDL:
+
+```rust
+let ddl = logical.to_sql(SqlDialect::Postgres);
+println!("{ddl}");
+```
+
+## SqlDialect
+
+| Variant | Target |
+|---|---|
+| `SqlDialect::Postgres` | PostgreSQL 12+ |
+| `SqlDialect::MySql` | MySQL 8 / MariaDB 10+ |
+| `SqlDialect::Sqlite` | SQLite 3 |
+
+## Full example
+
+Given the conceptual model from [Getting Started](/docs/getting-started):
+
+```
+Author (id PK, full_name) ──1..N── [wrote] ──0..N── Book (isbn PK, title, year)
+```
+
+### PostgreSQL
+
+```sql
+CREATE TABLE "Author" (
+  "id" INTEGER NOT NULL,
+  "full_name" VARCHAR(120) NOT NULL,
+  CONSTRAINT "pk_Author" PRIMARY KEY ("id")
+);
+
+CREATE TABLE "Book" (
+  "isbn" VARCHAR(13) NOT NULL,
+  "title" VARCHAR(255) NOT NULL,
+  "year" INTEGER NOT NULL,
+  "author_fk" INTEGER NOT NULL,
+  CONSTRAINT "pk_Book" PRIMARY KEY ("isbn"),
+  CONSTRAINT "fk_Book_Author" FOREIGN KEY ("author_fk")
+    REFERENCES "Author" ("id")
+    ON UPDATE NO ACTION ON DELETE NO ACTION
+);
+```
+
+### MySQL
+
+```sql
+CREATE TABLE `Author` (
+  `id` INT NOT NULL,
+  `full_name` VARCHAR(120) NOT NULL,
+  CONSTRAINT `pk_Author` PRIMARY KEY (`id`)
+);
+
+CREATE TABLE `Book` (
+  `isbn` VARCHAR(13) NOT NULL,
+  `title` VARCHAR(255) NOT NULL,
+  `year` INT NOT NULL,
+  `author_fk` INT NOT NULL,
+  CONSTRAINT `pk_Book` PRIMARY KEY (`isbn`),
+  CONSTRAINT `fk_Book_Author` FOREIGN KEY (`author_fk`)
+    REFERENCES `Author` (`id`)
+    ON UPDATE NO ACTION ON DELETE NO ACTION
+);
+```
+
+### SQLite
+
+```sql
+CREATE TABLE "Author" (
+  "id" INTEGER NOT NULL,
+  "full_name" TEXT NOT NULL,
+  PRIMARY KEY ("id")
+);
+
+CREATE TABLE "Book" (
+  "isbn" TEXT NOT NULL,
+  "title" TEXT NOT NULL,
+  "year" INTEGER NOT NULL,
+  "author_fk" INTEGER NOT NULL,
+  PRIMARY KEY ("isbn"),
+  FOREIGN KEY ("author_fk") REFERENCES "Author" ("id")
+);
+```
+
+## Identifier quoting
+
+Each dialect uses its own quoting character:
+
+| Dialect | Quote | Example |
+|---|---|---|
+| PostgreSQL | `"` (doubled for escaping) | `"my table"` |
+| MySQL | `` ` `` (doubled for escaping) | `` `my table` `` |
+| SQLite | `"` | `"my table"` |
+
+## Dialect differences
+
+| Feature | PostgreSQL | MySQL | SQLite |
+|---|---|---|---|
+| `Boolean` | `BOOLEAN` | `TINYINT(1)` | `INTEGER` |
+| `Float` | `DOUBLE PRECISION` | `DOUBLE` | `REAL` |
+| `Timestamp` | `TIMESTAMP` | `DATETIME` | `TEXT` |
+| `UUID` | `UUID` | `CHAR(36)` | `TEXT` |
+| `Bytes` | `BYTEA` | `BLOB` | `BLOB` |
+| Referential actions | All 5 | All 5 | Subset — `SET DEFAULT` may silently no-op |
+| Named PK constraint | `CONSTRAINT pk PRIMARY KEY` | same | Inline `PRIMARY KEY` only |
+
+## Implementing a custom dialect
+
+The `Dialect` trait lets you plug in your own SQL renderer:
+
+```rust
+use remodel_core::sql::dialect::Dialect;
+use remodel_core::models::types::DataType;
+use remodel_core::models::logical::ReferentialAction;
+
+struct OracleDialect;
+
+impl Dialect for OracleDialect {
+    fn render_type(&self, ty: &DataType) -> String {
+        match ty {
+            DataType::Integer  => "NUMBER(10)".into(),
+            DataType::BigInt   => "NUMBER(19)".into(),
+            DataType::Boolean  => "NUMBER(1)".into(),
+            DataType::Uuid     => "RAW(16)".into(),
+            DataType::Bytes    => "BLOB".into(),
+            DataType::Text     => "CLOB".into(),
+            DataType::Varchar(n) => format!("VARCHAR2({n})"),
+            DataType::Custom(s)  => s.clone(),
+            _ => "VARCHAR2(255)".into(), // fallback
+        }
+    }
+
+    fn quote_ident(&self, ident: &str) -> String {
+        format!("\"{}\"", ident.to_uppercase())
+    }
+}
+```
+
+You can then use the trait object directly with the DDL renderer (advanced use):
+
+```rust
+use remodel_core::sql::ddl::render_ddl;
+
+let ddl = render_ddl(&logical, &OracleDialect);
+```

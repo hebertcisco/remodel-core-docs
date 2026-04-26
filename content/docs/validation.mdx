@@ -1,0 +1,139 @@
+---
+title: Validation
+description: Structural checks for conceptual and logical models — diagnostic codes, severity levels, and how to interpret each finding.
+---
+
+remodel-core validates models non-fatally: `validate_conceptual` and `validate_logical` return a `Vec<Diagnostic>` rather than an `Err`. The caller decides whether any finding is severe enough to block further processing. The conversion pipeline (`to_logical`) rejects models with one or more `Severity::Error` diagnostics.
+
+## Running validation
+
+```rust
+use remodel_core::validation::{validate_conceptual, validate_logical, Severity};
+
+let diags = validate_conceptual(&m);
+
+let has_errors = diags.iter().any(|d| d.severity == Severity::Error);
+if has_errors {
+    for d in &diags {
+        eprintln!("[{}] {}: {}", d.severity, d.code, d.message);
+    }
+}
+
+// After conversion:
+let lm = m.to_logical()?;
+let logical_diags = validate_logical(&lm);
+```
+
+## Diagnostic
+
+| Field | Type | Description |
+|---|---|---|
+| `severity` | `Severity` | `Info`, `Warning`, or `Error` |
+| `code` | `&'static str` | Stable identifier, e.g. `"E002"` |
+| `message` | `String` | Human-readable description |
+
+### Constructing diagnostics
+
+```rust
+Diagnostic::error("E001", "entity has no name");
+Diagnostic::warning("W001", "entity has no attributes");
+```
+
+## Severity
+
+| Variant | Meaning |
+|---|---|
+| `Info` | The model is valid; this is a hint only |
+| `Warning` | Technically valid, but may not behave as expected |
+| `Error` | Violates a structural invariant; conversion will fail |
+
+## Conceptual model diagnostics
+
+### W001 — entity has no attributes
+
+**Severity:** Warning
+
+Emitted for each entity that has an empty `attributes` list *and* is not a specialization child. Specialization children often inherit attributes from the parent and are exempt.
+
+**Fix:** Add at least one attribute to the entity, or make it a specialization child.
+
+### E002 — entity has no primary-key attribute
+
+**Severity:** Error
+
+Emitted for each regular (non-weak, non-specialization-child) entity whose attributes contain none with `is_primary = true`.
+
+**Fix:** Call `add_primary_attribute` on the entity, or set `attr.is_primary = true` on an existing attribute.
+
+```rust
+m.add_primary_attribute(customer, "id", DataType::Integer)?;
+```
+
+### E003 — relationship has fewer than 2 endpoints
+
+**Severity:** Error
+
+A relationship with 0 or 1 endpoints is structurally invalid (it connects nothing). The minimum is 2.
+
+**Fix:** Call `.with(entity, cardinality)` at least once when building the relationship.
+
+### E004 — relationship references unknown entity
+
+**Severity:** Error
+
+One of the relationship's endpoints refers to an `EntityId` that does not exist in the model. This typically occurs when an entity was removed after the relationship was created, or when deserializing a corrupt file.
+
+**Fix:** Remove or correct the stale endpoint.
+
+## Logical model diagnostics
+
+### L001 — table has no columns
+
+**Severity:** Error
+
+A `Table` with an empty `columns` map cannot produce valid DDL.
+
+### L002 — table has no primary key
+
+**Severity:** Warning
+
+A table without a `PRIMARY KEY` constraint is valid SQL in most dialects but is an antipattern. The converter always synthesises a primary key, so this warning only appears when you build a `LogicalModel` manually.
+
+### L003 — FK references unknown table
+
+**Severity:** Error
+
+A `ForeignKey` constraint refers to a `TableId` that does not exist in the model.
+
+### L004 — FK arity mismatch
+
+**Severity:** Error
+
+A `ForeignKey` constraint has a different number of local columns (`columns`) than referenced columns (`references_columns`). The arity must match for the FK to be valid.
+
+## Integration pattern
+
+```rust
+fn compile(m: &ConceptualModel) -> remodel_core::Result<String> {
+    let diags = remodel_core::validation::validate_conceptual(m);
+
+    // Surface all findings
+    for d in &diags {
+        match d.severity {
+            Severity::Error   => eprintln!("ERROR   {} – {}", d.code, d.message),
+            Severity::Warning => eprintln!("WARN    {} – {}", d.code, d.message),
+            Severity::Info    => println!( "INFO    {} – {}", d.code, d.message),
+        }
+    }
+
+    // Block on errors
+    if diags.iter().any(|d| d.severity == Severity::Error) {
+        return Err(remodel_core::Error::ConversionError(
+            "model has validation errors".into()
+        ));
+    }
+
+    let lm = m.to_logical()?;
+    Ok(lm.to_sql(remodel_core::sql::SqlDialect::Postgres))
+}
+```

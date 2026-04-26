@@ -1,0 +1,218 @@
+---
+title: Conceptual Model
+description: The Entity-Relationship structures at the heart of remodel-core — entities, attributes, relationships, specializations, and unions.
+---
+
+The conceptual model (`models::conceptual`) represents an Entity-Relationship diagram as an in-memory graph. All elements are referenced by strongly-typed `u32` handles (IDs) rather than pointers or `Rc`, which keeps the model easy to serialize, clone, and mutate without lifetime issues.
+
+## ConceptualModel
+
+The root container. Call `ConceptualModel::new` to create one.
+
+```rust
+let mut m = ConceptualModel::new("e_commerce");
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | `String` | Diagram name (project or schema name) |
+| `entities` | `IndexMap<EntityId, Entity>` | All entities, in insertion order |
+| `attributes` | `IndexMap<AttributeId, Attribute>` | All attributes (entity and relationship) |
+| `relationships` | `IndexMap<RelationshipId, Relationship>` | All relationships |
+| `specializations` | `IndexMap<SpecializationId, Specialization>` | IS-A hierarchies |
+| `unions` | `IndexMap<UnionId, Union>` | Category / union constructs |
+| `associative_entities` | `IndexMap<AssociativeEntityId, AssociativeEntity>` | Associative entities wrapping a relationship |
+
+## Entities
+
+### Adding entities
+
+```rust
+let customer = m.add_entity("Customer");           // regular entity
+let order_item = m.add_weak_entity("OrderItem");   // weak entity (requires identifying relationship)
+```
+
+Weak entities are flagged with `entity.weak = true`. The conversion pipeline requires them to have a partial-key attribute and an identifying (1:N mandatory) relationship.
+
+### Entity fields
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `EntityId` | Unique handle within the model |
+| `name` | `String` | Display name |
+| `note` | `String` | Free-form annotation |
+| `attributes` | `Vec<AttributeId>` | IDs of owned attributes, in order |
+| `weak` | `bool` | `true` for weak entities |
+
+## Attributes
+
+Attributes can be owned by an entity **or** by a relationship (descriptive attributes).
+
+### Adding attributes
+
+```rust
+use remodel_core::models::conceptual::AttributeOwner;
+
+// Primary key
+let pk = m.add_primary_attribute(customer, "id", DataType::Integer)?;
+
+// Regular attribute on entity
+m.add_attribute(AttributeOwner::Entity(customer), "email", DataType::Varchar(120))?;
+
+// Descriptive attribute on a relationship
+m.add_attribute(AttributeOwner::Relationship(rel_id), "since", DataType::Date)?;
+```
+
+### Attribute fields
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `AttributeId` | Unique handle |
+| `name` | `String` | Column name after conversion |
+| `data_type` | `DataType` | See [Data Types](/docs/data-types) |
+| `is_primary` | `bool` | Part of the entity's primary identifier |
+| `is_partial_key` | `bool` | Partial key of a weak entity |
+| `is_optional` | `bool` | Allows NULL |
+| `kind` | `AttributeKind` | Simple, Composite, Multivalued, or Derived |
+| `children` | `Vec<AttributeId>` | Sub-attributes for Composite kind |
+
+### AttributeKind
+
+```rust
+pub enum AttributeKind {
+    Simple,                           // plain single-valued attribute
+    Composite,                        // contains sub-attributes (children)
+    Multivalued { min: u32, max: Option<u32> }, // 0..N values per entity
+    Derived,                          // computed from other attributes (shown underlined)
+}
+```
+
+<Callout type="info">
+  Multivalued attributes are converted to a separate table by default. Use `ConvertOptions::complex_attribute` to change this to `Flatten`.
+</Callout>
+
+## Relationships
+
+### Building a relationship
+
+Use the fluent `relate` builder:
+
+```rust
+// Binary 1:N
+m.relate("places", customer, Cardinality::OneToMany)
+ .with(order, Cardinality::ZeroToMany);
+
+// Self-referencing
+m.relate("manages", employee, Cardinality::ZeroToOne)
+ .with(employee, Cardinality::ZeroToMany);
+
+// With role labels
+m.relate("supervises", employee, Cardinality::ZeroToOne)
+ .with_role("manager")
+ .with(employee, Cardinality::ZeroToMany)
+ .with_role("subordinate");
+
+// Ternary
+m.relate("supplies", supplier, Cardinality::OneToMany)
+ .with(product,  Cardinality::OneToMany)
+ .with(project,  Cardinality::OneToMany);
+
+// Descriptive attribute on the relationship itself
+m.relate("enrollment", student, Cardinality::ZeroToMany)
+ .with(course, Cardinality::ZeroToMany)
+ .carry("grade", DataType::Real);
+```
+
+### Relationship fields
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `RelationshipId` | Unique handle |
+| `name` | `String` | Display name |
+| `endpoints` | `Vec<RelationshipEndpoint>` | At least 2; binary is the common case |
+| `attributes` | `Vec<AttributeId>` | Descriptive attributes |
+
+### RelationshipEndpoint
+
+| Field | Type | Description |
+|---|---|---|
+| `entity` | `EntityId` | The participating entity |
+| `cardinality` | `Cardinality` | See [Cardinality](/docs/cardinality) |
+| `role` | `Option<String>` | Role label (brModelo's `Papel`) |
+
+<Callout type="warn">
+  Cardinality in remodel-core follows the **look-here** convention from Heuser's textbook: the cardinality written *next to entity E* describes how many tuples of the **other** entity participate per tuple of E.
+</Callout>
+
+### Relationship helpers
+
+```rust
+let rel = m.relationship(rel_id)?;
+
+rel.is_binary(); // true if exactly 2 endpoints
+rel.is_self();   // true if all endpoints share the same entity
+rel.is_nary();   // true if 3+ distinct endpoints
+```
+
+## Specializations
+
+IS-A hierarchies (generalization / specialization). A specialization links one parent entity to two or more child entities.
+
+```rust
+let vehicle = m.add_entity("Vehicle");
+let car     = m.add_entity("Car");
+let truck   = m.add_entity("Truck");
+
+m.add_specialization(
+    "kind",
+    vehicle,              // parent (supertype)
+    vec![car, truck],     // children (subtypes) — at least 2
+    SpecializationKind::TOTAL_DISJOINT,
+)?;
+```
+
+### SpecializationKind
+
+| Constant | `total` | `overlapping` | Meaning |
+|---|---|---|---|
+| `PARTIAL_DISJOINT` | `false` | `false` | Some parent instances are in no child; each is in at most one |
+| `TOTAL_DISJOINT` | `true` | `false` | Every parent is in exactly one child |
+| `PARTIAL_OVERLAPPING` | `false` | `true` | Some parent instances are in no child; each may be in several |
+| `TOTAL_OVERLAPPING` | `true` | `true` | Every parent is in at least one child; may be in several |
+
+The choice of `SpecializationKind` affects which `SpecializationStrategy` variants are valid during conversion.
+
+## Unions
+
+A union (brModelo's `Uniao`) represents a category entity that is the union of two or more parent entities.
+
+```rust
+let person    = m.add_entity("Person");
+let company   = m.add_entity("Company");
+let owner     = m.add_entity("Owner");   // the category
+
+m.add_union("owner_union", vec![person, company], owner)?;
+```
+
+## Associative entities
+
+Wraps an existing relationship so it can itself participate in further relationships:
+
+```rust
+let works_on = m.relate("works_on", employee, Cardinality::ZeroToMany)
+                .with(project, Cardinality::ZeroToMany)
+                .id();
+
+let assoc = m.add_associative_entity(works_on)?;
+```
+
+## Serialization
+
+`ConceptualModel` derives `serde::Serialize` and `serde::Deserialize`, so you can round-trip it through JSON:
+
+```rust
+let json = serde_json::to_string_pretty(&m)?;
+let back: ConceptualModel = serde_json::from_str(&json)?;
+```
+
+This is exactly the format used by `.remodel` files. See [File Format](/docs/file-format) for the full envelope schema.
