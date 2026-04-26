@@ -4,6 +4,13 @@ import { join, relative } from 'node:path';
 import { createGetUrl, getSlugs } from 'fumadocs-core/source';
 import { getPageImagePath } from './app/lib/og';
 
+function normalizeBasePath(value: string | undefined): string {
+  if (!value || value === '/') return '/';
+
+  return value.endsWith('/') ? value.slice(0, -1) : value;
+}
+
+const basePath = normalizeBasePath(process.env.PAGES_BASE_PATH);
 const getUrl = createGetUrl('/docs');
 const docsDir = 'content/docs';
 
@@ -27,6 +34,7 @@ async function getDocEntries(dir: string): Promise<string[]> {
 
 export default {
   ssr: true,
+  basename: basePath,
   future: {
     v8_middleware: true,
   },
