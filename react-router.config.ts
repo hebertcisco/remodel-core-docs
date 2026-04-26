@@ -1,5 +1,5 @@
 import type { Config } from '@react-router/dev/config';
-import { glob } from 'node:fs/promises';
+import { globSync } from 'node:fs';
 import { createGetUrl, getSlugs } from 'fumadocs-core/source';
 import { getPageImagePath } from './app/lib/og';
 
@@ -18,7 +18,7 @@ export default {
       if (!excluded.includes(path)) paths.push(path);
     }
 
-    for await (const entry of glob('**/*.mdx', { cwd: 'content/docs' })) {
+    for (const entry of globSync('**/*.mdx', { cwd: 'content/docs' })) {
       const slugs = getSlugs(entry);
 
       paths.push(getUrl(slugs));
