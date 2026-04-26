@@ -1,9 +1,29 @@
 import type { Config } from '@react-router/dev/config';
-import { globSync } from 'node:fs';
+import { readdir } from 'node:fs/promises';
+import { join, relative } from 'node:path';
 import { createGetUrl, getSlugs } from 'fumadocs-core/source';
 import { getPageImagePath } from './app/lib/og';
 
 const getUrl = createGetUrl('/docs');
+const docsDir = 'content/docs';
+
+async function getDocEntries(dir: string): Promise<string[]> {
+  const entries = await readdir(dir, { withFileTypes: true });
+  const files = await Promise.all(
+    entries.map(async (entry) => {
+      const fullPath = join(dir, entry.name);
+
+      if (entry.isDirectory()) return getDocEntries(fullPath);
+      if (entry.isFile() && entry.name.endsWith('.mdx')) {
+        return [relative(docsDir, fullPath)];
+      }
+
+      return [];
+    }),
+  );
+
+  return files.flat();
+}
 
 export default {
   ssr: true,
@@ -18,7 +38,7 @@ export default {
       if (!excluded.includes(path)) paths.push(path);
     }
 
-    for (const entry of globSync('**/*.mdx', { cwd: 'content/docs' })) {
+    for (const entry of await getDocEntries(docsDir)) {
       const slugs = getSlugs(entry);
 
       paths.push(getUrl(slugs));
