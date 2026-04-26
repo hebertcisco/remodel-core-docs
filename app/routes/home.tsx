@@ -40,7 +40,7 @@ export default function Home() {
             Get started →
           </Link>
           <a
-            href="https://github.com/hebertcisco/remodel-ui"
+            href="https://github.com/hebertcisco/remodel-core"
             target="_blank"
             rel="noopener noreferrer"
             className="rounded-full border border-fd-border px-5 py-2.5 text-sm font-medium hover:bg-fd-muted transition-colors"

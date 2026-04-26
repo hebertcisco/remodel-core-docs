@@ -5,6 +5,6 @@ export const docsContentRoute = '/llms.mdx/docs';
 
 export const gitConfig = {
   user: 'hebertcisco',
-  repo: 'remodel-ui',
+  repo: 'remodel-core',
   branch: 'main',
 };
