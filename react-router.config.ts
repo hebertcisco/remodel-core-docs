@@ -35,6 +35,9 @@ async function getDocEntries(dir: string): Promise<string[]> {
 export default {
   ssr: true,
   basename: basePath,
+  routeDiscovery: {
+    mode: 'initial',
+  },
   future: {
     v8_middleware: true,
   },
