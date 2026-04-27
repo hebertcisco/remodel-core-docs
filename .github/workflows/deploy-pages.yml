@@ -55,6 +55,9 @@ jobs:
             cp -R build/client/. pages-dist/
           fi
 
+          cp pages-dist/index.html pages-dist/404.html
+          touch pages-dist/.nojekyll
+
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v5
         with:
